@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 0.6.8
+;; Version: 0.6.2
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -64,19 +64,15 @@ Adjust to your preference.
                 (let ((tmpfile (make-temp-file "git-peek-")))
                   (shell-command
                    (format "git -C %s show %s:%s > %s"
-                           git-peek--root hash
-                           (git-peek--normalize-path git-peek--file) tmpfile))
+                           git-peek--root hash git-peek--file tmpfile))
                   (prog1
                       (shell-command-to-string
                        (format "diff %s %s" current-file tmpfile))
                     (delete-file tmpfile)))
               (shell-command-to-string
                (format "git -C %s show %s:%s"
-                       git-peek--root hash
-                       (git-peek--normalize-path git-peek--file))))))
+                       git-peek--root hash git-peek--file)))))
       (with-current-buffer (get-buffer-create "*git-peek-preview*")
-        ;; Temporarily disable read-only to update content
-        (read-only-mode -1)
         (erase-buffer)
         (insert (if (string-empty-p content)
                     "(no diff - identical to current)"
@@ -85,22 +81,11 @@ Adjust to your preference.
         (let ((mode (if git-peek-show-diff
                         #'diff-mode
                       (assoc-default git-peek--file auto-mode-alist #'string-match))))
-          (when mode (funcall mode)))
-        ;; Protect buffer: view-mode (read-only) + suppress super-save silently
-        (view-mode 1)
-        (setq-local buffer-read-only t)
-        (add-hook 'write-file-functions (lambda () t) nil t)
-        ;; Prevent evil from taking over this buffer (avoids ivy state corruption)
-        (setq-local evil-state-cache nil)
-        (when (fboundp 'evil-emacs-state)
-          (setq-local evil-default-state 'emacs)))
+          (when mode (funcall mode))))
       (display-buffer "*git-peek-preview*"
-                      (if (>= git-peek-preview-height 1.0)
-                          '((display-buffer-full-frame))
-                        `((display-buffer-in-side-window)
-                          (side . top)
-                          (window-height . ,git-peek-preview-height))))
-      )))
+                      `((display-buffer-in-side-window)
+                        (side . top)
+                        (window-height . ,git-peek-preview-height))))))
 
 (advice-add 'ivy-next-line     :after (lambda (&rest _) (git-peek--do-preview)))
 (advice-add 'ivy-previous-line :after (lambda (&rest _) (git-peek--do-preview)))
@@ -120,17 +105,10 @@ In the commit selection minibuffer, use
 ;;; Internal helpers
 
 (defun git-peek--find-root ()
-  "Return git root directory (always with trailing slash) or signal error."
-  (let ((root (locate-dominating-file
-               (or buffer-file-name default-directory) ".git")))
-    (unless root (error "Git repository not found"))
-    (file-name-as-directory (file-truename root))))
-
-(defun git-peek--normalize-path (path)
-  "Remove leading ./ from PATH for git compatibility."
-  (if (string-prefix-p "./" path)
-      (substring path 2)
-    path))
+  "Return git root directory or signal error."
+  (or (locate-dominating-file
+       (or buffer-file-name default-directory) ".git")
+      (error "Git repository not found")))
 
 (defun git-peek--preselect (root)
   "Return preselect regexp based on current context using ROOT."
@@ -141,10 +119,7 @@ In the commit selection minibuffer, use
           (buffer-file-name buffer-file-name)
           (t nil))))
     (when abspath
-      (let ((rel (git-peek--normalize-path
-                  (file-relative-name abspath root))))
-        ;; Use ^ anchor so "index.html" doesn't match "gk/index.html"
-        (concat "^" (regexp-quote rel) "$")))))
+      (regexp-quote (file-relative-name abspath root)))))
 
 (defun git-peek--mozc-off ()
   "Turn off mozc-mode if active."
@@ -188,8 +163,7 @@ If DELETED is non-nil, use --all for deleted files."
                   (unless (file-directory-p git-peek-save-dir)
                     (make-directory git-peek-save-dir t))
                   (shell-command
-                   (format "git -C %s show %s:%s > %s" root hash
-                           (git-peek--normalize-path file) dest))
+                   (format "git -C %s show %s:%s > %s" root hash file dest))
                   (when (get-buffer "*git-peek-preview*")
                     (kill-buffer "*git-peek-preview*"))
                   (dired git-peek-save-dir)
