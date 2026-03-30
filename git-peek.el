@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.0.1
+;; Version: 1.0.2
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -22,19 +22,18 @@
 ;;   RET           プレビューバッファへフォーカス移動
 ;;   s             確定・保存
 ;;   C-d           diff/full切り替え
-;;   ?             キーガイドをミニバッファに表示
 ;;   q / C-g       キャンセル・終了
 ;;
 ;; キー操作（*git-peek-preview* バッファ内）:
 ;;   RET / f       サイドバーへフォーカス復帰
 ;;   s             確定・保存
-;;   ?             キーガイドをミニバッファに表示
 ;;   q / C-g       キャンセル・終了
 ;;   その他        通常の読み取り専用スクロール
 ;;
 ;; カスタマイズ:
 ;;   git-peek-next-key / git-peek-prev-key で追加キーを設定可能
-;;   git-peek-preview-modeline-color でプレビュー時のモードライン色を指定
+;;   git-peek-preview-modeline-color でアクティブバッファのモードライン色を指定
+;;                                    （サイドバー・プレビュー共用）
 ;;
 ;; Usage:
 ;;   M-x git-peek         - Browse current files in the repository
@@ -69,7 +68,7 @@
   "Additional key to move to previous commit, nil = disabled.")
 
 (defvar git-peek-preview-modeline-color "#852941"
-  "Modeline background color when preview buffer has focus.
+  "Modeline background color for the active git-peek buffer (sidebar and preview).
 Set to nil to disable color change.
 Example: \"#852941\"")
 
@@ -100,7 +99,7 @@ Example: \"#852941\"")
   (if (string-prefix-p "./" path) (substring path 2) path))
 
 (defun git-peek--initial-input (root)
-  "Return ivy initial input for current buffer file relative to ROOT."
+  "Return an ivy initial-input string for the current buffer's file relative to ROOT."
   (let ((abspath
          (cond
           ((derived-mode-p 'dired-mode) (dired-get-filename nil t))
@@ -122,77 +121,78 @@ Example: \"#852941\"")
 
 ;;; Focus management
 
+(defun git-peek--set-modeline-color (color)
+  "Set mode-line background to COLOR and record the cookie."
+  (when git-peek-preview-modeline-color
+    (set-face-background 'mode-line color)
+    (setq git-peek--preview-modeline-cookie t)))
+
 (defun git-peek--focus-preview ()
   "Move focus to preview window and apply modeline color."
   (when (window-live-p git-peek--preview-win)
     (select-window git-peek--preview-win)
-    (when git-peek-preview-modeline-color
-      ;; Same method as viewer: global override with set-face-background
-      (setq git-peek--preview-modeline-cookie t)
-      (set-face-background 'mode-line git-peek-preview-modeline-color))))
+    (git-peek--set-modeline-color git-peek-preview-modeline-color)))
 
 (defun git-peek--focus-sidebar ()
-  "Move focus back to sidebar and remove preview modeline color."
+  "Move focus back to sidebar and apply modeline color."
   (when (window-live-p git-peek--sidebar-win)
-    (when git-peek--preview-modeline-cookie
-      (set-face-background 'mode-line git-peek--modeline-color-default)
-      (setq git-peek--preview-modeline-cookie nil))
-    (select-window git-peek--sidebar-win)))
+    (select-window git-peek--sidebar-win)
+    (git-peek--set-modeline-color git-peek-preview-modeline-color)))
 
 ;;; Preview
 ;;
-;; Important: do not use with-selected-window.
-;; Only with-current-buffer is used for writing buffers.
-;; Window display position is controlled by set-window-point only.
+;; 重要: with-selected-window を使わない。
+;; バッファ書き込みは with-current-buffer のみ。
+;; ウィンドウ表示位置は set-window-point のみで制御。
 
 (defun git-peek--render-preview (commit)
   "Render COMMIT content into *git-peek-preview* buffer.
 Never changes window focus - sidebar remains selected."
-  (condition-case err
-      (let* ((hash (car (split-string commit " ")))
-             (current-file (expand-file-name git-peek--file git-peek--root))
-             (npath (git-peek--normalize-path git-peek--file))
-             (content
-              (if (and git-peek-show-diff
-                       (not git-peek--deleted)
-                       (file-exists-p current-file))
-                  (let ((tmpfile (make-temp-file "git-peek-")))
-                    (shell-command
-                     (format "git -C %s show %s:%s > %s"
-                             git-peek--root hash npath tmpfile))
-                    (prog1
-                        (shell-command-to-string
-                         (format "diff %s %s" current-file tmpfile))
-                      (delete-file tmpfile)))
-                (shell-command-to-string
-                 (format "git -C %s show %s:%s" git-peek--root hash npath))))
-             (date (git-peek--git git-peek--root
-                                  "show -s --format=%cd --date=format:%Y%m%d" hash))
-             (label (format "%s_%s" date (file-name-nondirectory git-peek--file))))
-        (with-current-buffer (get-buffer-create "*git-peek-preview*")
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert (if (string-empty-p content)
-                        "(no diff - identical to current)"
-                      content))
-            (goto-char (point-min)))
-          (let ((mode (if git-peek-show-diff
-                          #'diff-mode
-                        (assoc-default git-peek--file auto-mode-alist #'string-match))))
-            (when mode (funcall mode)))
-          (setq-local mode-line-buffer-identification
-                      (list (propertize (format " [preview] %s" label)
-                                        'face 'mode-line-buffer-id)))
-          (setq-local buffer-read-only t)
-          ;; Disable if view-mode is enabled for major mode hooks, etc.
-          (when (and (fboundp 'view-mode) view-mode)
-            (view-mode -1))
-          (use-local-map git-peek-preview-mode-map)
-          (when (fboundp 'evil-local-mode)
-            (evil-local-mode -1)))
-        (when (window-live-p git-peek--preview-win)
-          (set-window-point git-peek--preview-win 1)))
-    (error (message "git-peek preview error: %S" err))))
+  (when (string-match-p "^[0-9a-f]\\{7,\\}" commit)
+    (condition-case err
+        (let* ((hash (car (split-string commit " ")))
+               (current-file (expand-file-name git-peek--file git-peek--root))
+               (npath (git-peek--normalize-path git-peek--file))
+               (content
+                (if (and git-peek-show-diff
+                         (not git-peek--deleted)
+                         (file-exists-p current-file))
+                    (let ((tmpfile (make-temp-file "git-peek-")))
+                      (shell-command
+                       (format "git -C %s show %s:%s > %s"
+                               git-peek--root hash npath tmpfile))
+                      (prog1
+                          (shell-command-to-string
+                           (format "diff %s %s" current-file tmpfile))
+                        (delete-file tmpfile)))
+                  (shell-command-to-string
+                   (format "git -C %s show %s:%s" git-peek--root hash npath))))
+               (date (git-peek--git git-peek--root
+                                    "show -s --format=%cd --date=format:%Y%m%d" hash))
+               (label (format "%s_%s" date (file-name-nondirectory git-peek--file))))
+          (with-current-buffer (get-buffer-create "*git-peek-preview*")
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert (if (string-empty-p content)
+                          "(no diff - identical to current)"
+                        content))
+              (goto-char (point-min)))
+            (let ((mode (if git-peek-show-diff
+                            #'diff-mode
+                          (assoc-default git-peek--file auto-mode-alist #'string-match))))
+              (when mode (funcall mode)))
+            (setq-local mode-line-buffer-identification
+                        (list (propertize (format " [preview] %s" label)
+                                          'face 'mode-line-buffer-id)))
+            (setq-local buffer-read-only t)
+            (when (and (fboundp 'view-mode) view-mode)
+              (view-mode -1))
+            (use-local-map git-peek-preview-mode-map)
+            (when (fboundp 'evil-local-mode)
+              (evil-local-mode -1)))
+          (when (window-live-p git-peek--preview-win)
+            (set-window-point git-peek--preview-win 1)))
+      (error (message "Git-peek preview error: %S" err)))))
 
 ;;; Commit sidebar
 
@@ -215,27 +215,33 @@ Must be called with *git-peek-commits* as current buffer."
    (buffer-substring-no-properties
     (line-beginning-position) (line-end-position))))
 
-(defun git-peek--last-commit-pos ()
-  "Return the position of the last commit line in *git-peek-commits*.
-The guide text block appended after commits is not a valid commit."
-  (save-excursion
-    (goto-char (point-max))
-    ;; Find the last non-blank line before the guide text block (starting with a blank line)
-    (when (re-search-backward "^[0-9a-f]" nil t)
-      (line-beginning-position))))
-
 (defun git-peek--move-and-preview (lines)
-  "Move LINES forward in sidebar, highlight, and update preview.
+  "Move LINES forward in sidebar with wraparound, highlight, and update preview.
 Keeps focus on the sidebar window throughout."
   (unless (window-live-p git-peek--sidebar-win)
     (error "Git-peek: sidebar window is gone"))
   (with-selected-window git-peek--sidebar-win
-    (let ((inhibit-read-only t)
-          (limit (or (git-peek--last-commit-pos) (point-max))))
+    (let* ((inhibit-read-only t)
+           ;; 有効なコミット行の範囲: 2行目〜最後のコミット行
+           (top (save-excursion
+                  (goto-char (point-min))
+                  (forward-line 1)
+                  (point)))
+           ;; コミット行は " HASH ..." の形式（先頭スペース＋7桁以上の16進数）
+           (bottom (save-excursion
+                     (goto-char (point-max))
+                     (while (and (not (bobp))
+                                 (not (string-match-p "^[0-9a-f]\\{7,\\}"
+                                                      (string-trim
+                                                       (buffer-substring-no-properties
+                                                        (line-beginning-position)
+                                                        (line-end-position))))))
+                       (forward-line -1))
+                     (line-beginning-position))))
       (forward-line lines)
       (cond
-       ((< (point) (point-min)) (goto-char (point-min)) (forward-line 1))
-       ((> (point) limit) (goto-char limit)))
+       ((< (point) top)    (goto-char bottom))  ; 上端→末尾へ
+       ((> (point) bottom) (goto-char top)))    ; 下端→先頭へ
       (git-peek--highlight-current)
       (set-window-point git-peek--sidebar-win (point))
       (git-peek--render-preview (git-peek--current-commit)))))
@@ -290,17 +296,17 @@ Keeps focus on the sidebar window throughout."
   (when (overlayp git-peek--hl-overlay)
     (delete-overlay git-peek--hl-overlay)
     (setq git-peek--hl-overlay nil))
-  ;;; Be sure to restore the modeline color before clearing
+  ;; modeline色を必ず復元してからクリア
   (when git-peek--preview-modeline-cookie
     (set-face-background 'mode-line git-peek--modeline-color-default)
     (setq git-peek--preview-modeline-cookie nil))
   (when (and git-peek--dimmer-was-on (fboundp 'dimmer-mode))
     (dimmer-mode 1))
-  ;; Restore window settings
+  ;; ウィンドウ設定を復元
   (when git-peek--saved-wconf
     (set-window-configuration git-peek--saved-wconf)
     (setq git-peek--saved-wconf nil))
-  ;; kill remaining buffers
+  ;; 残存バッファをkill
   (dolist (bname '("*git-peek-commits*" "*git-peek-preview*"))
     (when (get-buffer bname)
       (kill-buffer bname)))
@@ -332,7 +338,6 @@ Keeps focus on the sidebar window throughout."
     (define-key map (kbd "s")      #'git-peek--commit-save)
     (define-key map (kbd "C-g")    #'git-peek--commit-cancel)
     (define-key map (kbd "q")      #'git-peek--commit-cancel)
-    (define-key map (kbd "?")      #'git-peek--show-help)
     map))
 
 (defvar git-peek-preview-mode-map
@@ -343,17 +348,9 @@ Keeps focus on the sidebar window throughout."
     (define-key map (kbd "s")   #'git-peek--preview-save)
     (define-key map (kbd "C-g") #'git-peek--commit-cancel)
     (define-key map (kbd "q")   #'git-peek--commit-cancel)
-    (define-key map (kbd "?")   #'git-peek--show-help)
     map)
   "Keymap for *git-peek-preview* buffer.
 Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down-command], etc.) work.")
-
-;;; Help
-
-(defun git-peek--show-help ()
-  "Show a brief key guide in the minibuffer."
-  (interactive)
-  (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
 
 ;;; Commit mode
 
@@ -385,12 +382,12 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
           git-peek--file    file
           git-peek--deleted deleted
           git-peek--modeline-color-default (face-background 'mode-line))
-    ;; dimmer-mode paused
+    ;; dimmer-mode を一時停止
     (setq git-peek--dimmer-was-on
           (and (boundp 'dimmer-mode) dimmer-mode))
     (when git-peek--dimmer-was-on
       (dimmer-mode -1))
-    ;; Clear existing buffer overlay
+    ;; 既存バッファ・オーバーレイをクリア
     (when (overlayp git-peek--hl-overlay)
       (delete-overlay git-peek--hl-overlay)
       (setq git-peek--hl-overlay nil))
@@ -399,8 +396,8 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
         (let ((win (get-buffer-window bname)))
           (when win (delete-window win)))
         (kill-buffer bname)))
-    ;; Window Layout Construction
-    ;; Save current window settings
+    ;; ── ウィンドウレイアウト構築 ──
+    ;; 現在のウィンドウ設定を保存
     (setq git-peek--saved-wconf (current-window-configuration))
     (delete-other-windows)
     (let* ((cbuf (get-buffer-create "*git-peek-commits*"))
@@ -414,25 +411,35 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
       (with-current-buffer cbuf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert (propertize "  ?:help\n" 'face 'shadow))
-          (dolist (c commits) (insert c "\n"))
-          ;; key guide added to the end of the sidebar (hidden if there are too many commits)
-          (insert (propertize
-                   (concat "\n"
-                           "--- [sidebar] ---\n"
-                           "↓/SPC:next  ↑/b:prev\n"
-                           "RET:preview  s:save\n"
-                           "C-d:diff  q:quit\n"
-                           "--- [preview] ---\n"
-                           "RET/f:back  s:save\n"
-                           "q:quit  scroll:free")
-                   'face 'shadow))
+          ;; 先頭行: 選択ファイル名を表示（カーソルはここに乗らない）
+          (insert (propertize (format " %s\n" git-peek--file) 'face 'shadow))
+          ;; コミット行: 半角1個インデント
+          (dolist (c commits) (insert (format " %s\n" c)))
           (goto-char (point-min))
-          (forward-line 1))  ;; Skip the ?:help line and go to the first commit
+          (forward-line 1))  ; ファイル名行をスキップして最初のコミットへ
         (git-peek-commit-mode)
         (git-peek--highlight-current))
+      ;; ウィンドウポイントを最初のコミット行に確実に設定
+      (set-window-point swin
+                        (with-current-buffer cbuf
+                          (save-excursion
+                            (goto-char (point-min))
+                            (forward-line 1)
+                            (point))))
       (select-window swin)
-      (git-peek--render-preview (git-peek--current-commit)))))
+      ;; サイドバーがアクティブな状態で起動するのでmodeline色を適用
+      (when git-peek-preview-modeline-color
+        (set-face-background 'mode-line git-peek-preview-modeline-color)
+        (setq git-peek--preview-modeline-cookie t))
+      ;; 最初のコミットのプレビューを描画
+      (let ((first-commit (with-current-buffer cbuf
+                            (save-excursion
+                              (goto-char (point-min))
+                              (forward-line 1)
+                              (string-trim
+                               (buffer-substring-no-properties
+                                (line-beginning-position) (line-end-position)))))))
+        (git-peek--render-preview first-commit)))))
 
 ;;; Public commands
 
