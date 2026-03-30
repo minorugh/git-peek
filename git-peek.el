@@ -34,6 +34,7 @@
 ;;   git-peek-next-key / git-peek-prev-key で追加キーを設定可能
 ;;   git-peek-preview-modeline-color でアクティブバッファのモードライン色を指定
 ;;                                    （サイドバー・プレビュー共用）
+;;   git-peek-filename-face でサイドバー先頭のファイル名行の表示スタイルを指定
 ;;
 ;; Usage:
 ;;   M-x git-peek         - Browse current files in the repository
@@ -71,6 +72,9 @@
   "Modeline background color for the active git-peek buffer (sidebar and preview).
 Set to nil to disable color change.
 Example: \"#852941\"")
+
+(defvar git-peek-filename-face '(:foreground "#aaaaaa" :background "#2a3a5a" :weight bold)
+  "Face for the filename header line at the top of the sidebar.")
 
 ;;; Session variables
 
@@ -412,7 +416,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
         (let ((inhibit-read-only t))
           (erase-buffer)
           ;; 先頭行: 選択ファイル名を表示（カーソルはここに乗らない）
-          (insert (propertize (format " %s\n" git-peek--file) 'face 'shadow))
+          (insert (propertize (format " %s\n" git-peek--file) 'face git-peek-filename-face))
           ;; コミット行: 半角1個インデント
           (dolist (c commits) (insert (format " %s\n" c)))
           (goto-char (point-min))
