@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 0.6.8
+;; Version: 1.0.1
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -11,6 +11,30 @@
 
 ;; Browse past git-committed versions of files via ivy with real-time preview.
 ;; Selected versions are saved to ~/Dropbox/backup/tmp/ with a date prefix.
+;;
+;; レイアウト:
+;;   左サイドバー : *git-peek-commits*  commit一覧
+;;   右           : *git-peek-preview*  内容プレビュー（全画面）
+;;
+;; キー操作（*git-peek-commits* バッファ内）:
+;;   <down> / SPC  次のコミット＋プレビュー更新
+;;   <up> / b      前のコミット＋プレビュー更新
+;;   RET           プレビューバッファへフォーカス移動
+;;   s             確定・保存
+;;   C-d           diff/full切り替え
+;;   ?             キーガイドをミニバッファに表示
+;;   q / C-g       キャンセル・終了
+;;
+;; キー操作（*git-peek-preview* バッファ内）:
+;;   RET / f       サイドバーへフォーカス復帰
+;;   s             確定・保存
+;;   ?             キーガイドをミニバッファに表示
+;;   q / C-g       キャンセル・終了
+;;   その他        通常の読み取り専用スクロール
+;;
+;; カスタマイズ:
+;;   git-peek-next-key / git-peek-prev-key で追加キーを設定可能
+;;   git-peek-preview-modeline-color でプレビュー時のモードライン色を指定
 ;;
 ;; Usage:
 ;;   M-x git-peek         - Browse current files in the repository
@@ -23,17 +47,11 @@
 (require 'dired)
 
 (declare-function ivy-read "ivy")
-(declare-function ivy-state-current "ivy")
-(defvar ivy-last)
 
 ;;; Customizable variables
 
-(defvar git-peek-preview-height 0.5
-  "Height ratio of preview window (0.0-1.0).
-Adjust to your preference.
-1.0 = full screen (minus minibuffer).
-0.8 = 80%, default, good for dired/general use.
-0.5 = 50%, good for side-by-side comparison with current file.")
+(defvar git-peek-sidebar-width 30
+  "Width of the left sidebar showing commit list.")
 
 (defvar git-peek-save-dir (expand-file-name "~/Dropbox/backup/tmp/")
   "Directory to save extracted files.")
@@ -44,188 +62,396 @@ Adjust to your preference.
 (defvar git-peek-toggle-diff-key (kbd "C-d")
   "Key to toggle diff/full-content preview during commit selection.")
 
-(defvar git-peek--root nil "Git root directory for current session.")
-(defvar git-peek--file nil "Selected file (relative path) for current session.")
-(defvar git-peek--active nil "Non-nil while commit selection ivy is active.")
-(defvar git-peek--deleted nil "Non-nil when browsing deleted files.")
+(defvar git-peek-next-key nil
+  "Additional key to move to next commit, nil = disabled.")
 
-;;; Preview
+(defvar git-peek-prev-key nil
+  "Additional key to move to previous commit, nil = disabled.")
 
-(defun git-peek--do-preview ()
-  "Preview the commit at current ivy cursor position."
-  (when git-peek--active
-    (let* ((commit (ivy-state-current ivy-last))
-           (hash (car (split-string commit " ")))
-           (current-file (expand-file-name git-peek--file git-peek--root))
-           (content
-            (if (and git-peek-show-diff
-                     (not git-peek--deleted)
-                     (file-exists-p current-file))
-                (let ((tmpfile (make-temp-file "git-peek-")))
-                  (shell-command
-                   (format "git -C %s show %s:%s > %s"
-                           git-peek--root hash
-                           (git-peek--normalize-path git-peek--file) tmpfile))
-                  (prog1
-                      (shell-command-to-string
-                       (format "diff %s %s" current-file tmpfile))
-                    (delete-file tmpfile)))
-              (shell-command-to-string
-               (format "git -C %s show %s:%s"
-                       git-peek--root hash
-                       (git-peek--normalize-path git-peek--file))))))
-      (with-current-buffer (get-buffer-create "*git-peek-preview*")
-        ;; Temporarily disable read-only to update content
-        (read-only-mode -1)
-        (erase-buffer)
-        (insert (if (string-empty-p content)
-                    "(no diff - identical to current)"
-                  content))
-        (goto-char (point-min))
-        (let ((mode (if git-peek-show-diff
-                        #'diff-mode
-                      (assoc-default git-peek--file auto-mode-alist #'string-match))))
-          (when mode (funcall mode)))
-        ;; Protect buffer: view-mode (read-only) + suppress super-save silently
-        (view-mode 1)
-        (setq-local buffer-read-only t)
-        (add-hook 'write-file-functions (lambda () t) nil t)
-        ;; Prevent evil from taking over this buffer (avoids ivy state corruption)
-        (setq-local evil-state-cache nil)
-        (when (fboundp 'evil-emacs-state)
-          (setq-local evil-default-state 'emacs)))
-      (display-buffer "*git-peek-preview*"
-                      (if (>= git-peek-preview-height 1.0)
-                          '((display-buffer-full-frame))
-                        `((display-buffer-in-side-window)
-                          (side . top)
-                          (window-height . ,git-peek-preview-height))))
-      )))
+(defvar git-peek-preview-modeline-color "#852941"
+  "Modeline background color when preview buffer has focus.
+Set to nil to disable color change.
+Example: \"#852941\"")
 
-(advice-add 'ivy-next-line     :after (lambda (&rest _) (git-peek--do-preview)))
-(advice-add 'ivy-previous-line :after (lambda (&rest _) (git-peek--do-preview)))
+;;; Session variables
 
-(defun git-peek--toggle-diff ()
-  "Toggle diff/full-content preview and refresh.
-
-In the commit selection minibuffer, use
-\\<git-peek-ivy-map>
-\\[git-peek--toggle-diff] to toggle preview mode."
-  (interactive)
-  (setq git-peek-show-diff (not git-peek-show-diff))
-  (message "git-peek: preview mode = %s"
-           (if git-peek-show-diff "diff" "full content"))
-  (git-peek--do-preview))
+(defvar git-peek--root nil)
+(defvar git-peek--file nil)
+(defvar git-peek--deleted nil)
+(defvar git-peek--hl-overlay nil)
+(defvar git-peek--sidebar-win nil "The sidebar window object.")
+(defvar git-peek--preview-win nil "The preview window object.")
+(defvar git-peek--dimmer-was-on nil "Non-nil if dimmer-mode was active before git-peek.")
+(defvar git-peek--saved-wconf nil "Window configuration saved before git-peek layout.")
+(defvar git-peek--preview-modeline-cookie nil "Face-remap cookie for preview modeline color.")
+(defvar git-peek--modeline-color-default nil "Default mode-line background color saved before git-peek.")
 
 ;;; Internal helpers
 
 (defun git-peek--find-root ()
-  "Return git root directory (always with trailing slash) or signal error."
+  "Return the git repository root for the current buffer, or signal an error."
   (let ((root (locate-dominating-file
                (or buffer-file-name default-directory) ".git")))
     (unless root (error "Git repository not found"))
     (file-name-as-directory (file-truename root))))
 
 (defun git-peek--normalize-path (path)
-  "Remove leading ./ from PATH for git compatibility."
-  (if (string-prefix-p "./" path)
-      (substring path 2)
-    path))
+  "Remove leading \"./\" from PATH for use in git commands."
+  (if (string-prefix-p "./" path) (substring path 2) path))
 
-(defun git-peek--preselect (root)
-  "Return preselect regexp based on current context using ROOT."
+(defun git-peek--initial-input (root)
+  "Return ivy initial input for current buffer file relative to ROOT."
   (let ((abspath
          (cond
-          ((derived-mode-p 'dired-mode)
-           (dired-get-filename nil t))
+          ((derived-mode-p 'dired-mode) (dired-get-filename nil t))
           (buffer-file-name buffer-file-name)
           (t nil))))
     (when abspath
-      (let ((rel (git-peek--normalize-path
-                  (file-relative-name abspath root))))
-        ;; Use ^ anchor so "index.html" doesn't match "gk/index.html"
-        (concat "^" (regexp-quote rel) "$")))))
+      (concat "^" (git-peek--normalize-path (file-relative-name abspath root))))))
 
 (defun git-peek--mozc-off ()
-  "Turn off mozc-mode if active."
+  "Disable mozc-mode if it is currently active."
   (when (and (boundp 'mozc-mode) mozc-mode)
     (mozc-mode -1)))
 
+(defun git-peek--git (root &rest args)
+  "Run a git command in ROOT with ARGS and return trimmed output."
+  (string-trim
+   (shell-command-to-string
+    (concat "git -C " root " " (mapconcat #'identity args " ")))))
+
+;;; Focus management
+
+(defun git-peek--focus-preview ()
+  "Move focus to preview window and apply modeline color."
+  (when (window-live-p git-peek--preview-win)
+    (select-window git-peek--preview-win)
+    (when git-peek-preview-modeline-color
+      ;; Same method as viewer: global override with set-face-background
+      (setq git-peek--preview-modeline-cookie t)
+      (set-face-background 'mode-line git-peek-preview-modeline-color))))
+
+(defun git-peek--focus-sidebar ()
+  "Move focus back to sidebar and remove preview modeline color."
+  (when (window-live-p git-peek--sidebar-win)
+    (when git-peek--preview-modeline-cookie
+      (set-face-background 'mode-line git-peek--modeline-color-default)
+      (setq git-peek--preview-modeline-cookie nil))
+    (select-window git-peek--sidebar-win)))
+
+;;; Preview
+;;
+;; Important: do not use with-selected-window.
+;; Only with-current-buffer is used for writing buffers.
+;; Window display position is controlled by set-window-point only.
+
+(defun git-peek--render-preview (commit)
+  "Render COMMIT content into *git-peek-preview* buffer.
+Never changes window focus - sidebar remains selected."
+  (condition-case err
+      (let* ((hash (car (split-string commit " ")))
+             (current-file (expand-file-name git-peek--file git-peek--root))
+             (npath (git-peek--normalize-path git-peek--file))
+             (content
+              (if (and git-peek-show-diff
+                       (not git-peek--deleted)
+                       (file-exists-p current-file))
+                  (let ((tmpfile (make-temp-file "git-peek-")))
+                    (shell-command
+                     (format "git -C %s show %s:%s > %s"
+                             git-peek--root hash npath tmpfile))
+                    (prog1
+                        (shell-command-to-string
+                         (format "diff %s %s" current-file tmpfile))
+                      (delete-file tmpfile)))
+                (shell-command-to-string
+                 (format "git -C %s show %s:%s" git-peek--root hash npath))))
+             (date (git-peek--git git-peek--root
+                                  "show -s --format=%cd --date=format:%Y%m%d" hash))
+             (label (format "%s_%s" date (file-name-nondirectory git-peek--file))))
+        (with-current-buffer (get-buffer-create "*git-peek-preview*")
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert (if (string-empty-p content)
+                        "(no diff - identical to current)"
+                      content))
+            (goto-char (point-min)))
+          (let ((mode (if git-peek-show-diff
+                          #'diff-mode
+                        (assoc-default git-peek--file auto-mode-alist #'string-match))))
+            (when mode (funcall mode)))
+          (setq-local mode-line-buffer-identification
+                      (list (propertize (format " [preview] %s" label)
+                                        'face 'mode-line-buffer-id)))
+          (setq-local buffer-read-only t)
+          ;; Disable if view-mode is enabled for major mode hooks, etc.
+          (when (and (fboundp 'view-mode) view-mode)
+            (view-mode -1))
+          (use-local-map git-peek-preview-mode-map)
+          (when (fboundp 'evil-local-mode)
+            (evil-local-mode -1)))
+        (when (window-live-p git-peek--preview-win)
+          (set-window-point git-peek--preview-win 1)))
+    (error (message "git-peek preview error: %S" err))))
+
+;;; Commit sidebar
+
+(defun git-peek--highlight-current ()
+  "Highlight the line at point.
+Must be called with *git-peek-commits* as current buffer."
+  (when (overlayp git-peek--hl-overlay)
+    (delete-overlay git-peek--hl-overlay)
+    (setq git-peek--hl-overlay nil))
+  (let* ((bol (line-beginning-position))
+         (eol (min (point-max) (1+ (line-end-position))))
+         (ov  (make-overlay bol eol (current-buffer))))
+    (overlay-put ov 'face 'highlight)
+    (overlay-put ov 'priority 100)
+    (setq git-peek--hl-overlay ov)))
+
+(defun git-peek--current-commit ()
+  "Return commit string at point in current buffer."
+  (string-trim
+   (buffer-substring-no-properties
+    (line-beginning-position) (line-end-position))))
+
+(defun git-peek--last-commit-pos ()
+  "Return the position of the last commit line in *git-peek-commits*.
+The guide text block appended after commits is not a valid commit."
+  (save-excursion
+    (goto-char (point-max))
+    ;; Find the last non-blank line before the guide text block (starting with a blank line)
+    (when (re-search-backward "^[0-9a-f]" nil t)
+      (line-beginning-position))))
+
+(defun git-peek--move-and-preview (lines)
+  "Move LINES forward in sidebar, highlight, and update preview.
+Keeps focus on the sidebar window throughout."
+  (unless (window-live-p git-peek--sidebar-win)
+    (error "Git-peek: sidebar window is gone"))
+  (with-selected-window git-peek--sidebar-win
+    (let ((inhibit-read-only t)
+          (limit (or (git-peek--last-commit-pos) (point-max))))
+      (forward-line lines)
+      (cond
+       ((< (point) (point-min)) (goto-char (point-min)) (forward-line 1))
+       ((> (point) limit) (goto-char limit)))
+      (git-peek--highlight-current)
+      (set-window-point git-peek--sidebar-win (point))
+      (git-peek--render-preview (git-peek--current-commit)))))
+
+(defun git-peek--commit-next ()
+  "Move to next commit and update preview."
+  (interactive)
+  (git-peek--move-and-preview 1))
+
+(defun git-peek--commit-prev ()
+  "Move to previous commit and update preview."
+  (interactive)
+  (git-peek--move-and-preview -1))
+
+(defun git-peek--commit-toggle-diff ()
+  "Toggle diff/full preview and refresh."
+  (interactive)
+  (setq git-peek-show-diff (not git-peek-show-diff))
+  (message "git-peek: preview = %s" (if git-peek-show-diff "diff" "full"))
+  (git-peek--render-preview (git-peek--current-commit)))
+
+(defun git-peek--commit-go-preview ()
+  "Move focus to preview buffer."
+  (interactive)
+  (git-peek--focus-preview))
+
+(defun git-peek--preview-go-sidebar ()
+  "Move focus back to sidebar."
+  (interactive)
+  (git-peek--focus-sidebar))
+
+(defun git-peek--commit-save ()
+  "Save current commit (called from sidebar)."
+  (interactive)
+  (git-peek--finish (git-peek--current-commit)))
+
+(defun git-peek--preview-save ()
+  "Save current commit (called from preview buffer)."
+  (interactive)
+  (if (buffer-live-p (get-buffer "*git-peek-commits*"))
+      (with-current-buffer "*git-peek-commits*"
+        (git-peek--finish (git-peek--current-commit)))
+    (message "git-peek: commits buffer not found")))
+
+(defun git-peek--commit-cancel ()
+  "Cancel commit selection."
+  (interactive)
+  (git-peek--finish nil))
+
+(defun git-peek--finish (commit)
+  "Tear down git-peek layout; save COMMIT if non-nil."
+  (when (overlayp git-peek--hl-overlay)
+    (delete-overlay git-peek--hl-overlay)
+    (setq git-peek--hl-overlay nil))
+  ;;; Be sure to restore the modeline color before clearing
+  (when git-peek--preview-modeline-cookie
+    (set-face-background 'mode-line git-peek--modeline-color-default)
+    (setq git-peek--preview-modeline-cookie nil))
+  (when (and git-peek--dimmer-was-on (fboundp 'dimmer-mode))
+    (dimmer-mode 1))
+  ;; Restore window settings
+  (when git-peek--saved-wconf
+    (set-window-configuration git-peek--saved-wconf)
+    (setq git-peek--saved-wconf nil))
+  ;; kill remaining buffers
+  (dolist (bname '("*git-peek-commits*" "*git-peek-preview*"))
+    (when (get-buffer bname)
+      (kill-buffer bname)))
+  (if (null commit)
+      (message "git-peek: cancelled")
+    (let* ((hash (car (split-string commit " ")))
+           (date (git-peek--git git-peek--root
+                                "show -s --format=%cd --date=format:%Y%m%d" hash))
+           (dest (concat git-peek-save-dir date "_"
+                         (file-name-nondirectory git-peek--file))))
+      (unless (file-directory-p git-peek-save-dir)
+        (make-directory git-peek-save-dir t))
+      (shell-command
+       (format "git -C %s show %s:%s > %s"
+               git-peek--root hash
+               (git-peek--normalize-path git-peek--file) dest))
+      (dired git-peek-save-dir)
+      (message "Saved: %s" dest))))
+
+;;; Keymaps
+
+(defvar git-peek-commit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "<down>") #'git-peek--commit-next)
+    (define-key map (kbd "SPC")    #'git-peek--commit-next)
+    (define-key map (kbd "<up>")   #'git-peek--commit-prev)
+    (define-key map (kbd "b")      #'git-peek--commit-prev)
+    (define-key map (kbd "RET")    #'git-peek--commit-go-preview)
+    (define-key map (kbd "s")      #'git-peek--commit-save)
+    (define-key map (kbd "C-g")    #'git-peek--commit-cancel)
+    (define-key map (kbd "q")      #'git-peek--commit-cancel)
+    (define-key map (kbd "?")      #'git-peek--show-help)
+    map))
+
+(defvar git-peek-preview-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map (current-global-map))
+    (define-key map (kbd "RET") #'git-peek--preview-go-sidebar)
+    (define-key map (kbd "f")   #'git-peek--preview-go-sidebar)
+    (define-key map (kbd "s")   #'git-peek--preview-save)
+    (define-key map (kbd "C-g") #'git-peek--commit-cancel)
+    (define-key map (kbd "q")   #'git-peek--commit-cancel)
+    (define-key map (kbd "?")   #'git-peek--show-help)
+    map)
+  "Keymap for *git-peek-preview* buffer.
+Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down-command], etc.) work.")
+
+;;; Help
+
+(defun git-peek--show-help ()
+  "Show a brief key guide in the minibuffer."
+  (interactive)
+  (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
+
+;;; Commit mode
+
+(define-derived-mode git-peek-commit-mode fundamental-mode "git-peek"
+  "Major mode for git-peek commit selection sidebar."
+  (setq-local truncate-lines t)
+  (setq-local cursor-type 'bar)
+  (setq-local buffer-read-only t)
+  (when (fboundp 'evil-local-mode)
+    (evil-local-mode -1))
+  (local-set-key git-peek-toggle-diff-key #'git-peek--commit-toggle-diff)
+  (when git-peek-next-key (local-set-key git-peek-next-key #'git-peek--commit-next))
+  (when git-peek-prev-key (local-set-key git-peek-prev-key #'git-peek--commit-prev))
+  (setq-local mode-line-buffer-identification
+              (list (propertize " [git-peek] ↓/SPC:次 ↑/b:前 RET:プレビューへ s:保存 q:終了 C-d:diff"
+                                'face 'mode-line-buffer-id))))
+
+;;; Layout setup
+
 (defun git-peek--run (root file &optional deleted)
-  "Run commit selection ivy for FILE in ROOT.
-If DELETED is non-nil, use --all for deleted files."
+  "Set up sidebar+preview layout for FILE in ROOT."
   (let* ((log-cmd (if deleted
                       (format "git -C %s log --all --oneline -- %s" root file)
                     (format "git -C %s log --oneline -- %s" root file)))
-         (commits (split-string
-                   (shell-command-to-string log-cmd) "\n" t))
-         (origin-buf (current-buffer))
-         (committed nil))
-    (setq git-peek--root root
-          git-peek--file file
-          git-peek--active t
-          git-peek--deleted deleted)
-    (git-peek--do-preview)
-    (ivy-read (if deleted "Select Commit (deleted): " "Select Commit: ")
-              commits
-              :keymap (let ((map (make-sparse-keymap)))
-                        (set-keymap-parent map ivy-minibuffer-map)
-                        (define-key map git-peek-toggle-diff-key #'git-peek--toggle-diff)
-                        map)
-              :action
-              (lambda (commit)
-                (setq committed t)
-                (setq git-peek--active nil)
-                (let* ((hash (car (split-string commit " ")))
-                       (date (string-trim
-                              (shell-command-to-string
-                               (concat "git -C " root
-                                       " show -s --format=%cd --date=format:%Y%m%d "
-                                       hash))))
-                       (dest (concat git-peek-save-dir
-                                     date "_"
-                                     (file-name-nondirectory file))))
-                  (unless (file-directory-p git-peek-save-dir)
-                    (make-directory git-peek-save-dir t))
-                  (shell-command
-                   (format "git -C %s show %s:%s > %s" root hash
-                           (git-peek--normalize-path file) dest))
-                  (when (get-buffer "*git-peek-preview*")
-                    (kill-buffer "*git-peek-preview*"))
-                  (dired git-peek-save-dir)
-                  (message "Saved: %s" dest)))
-              :unwind
-              (lambda ()
-                (setq git-peek--active nil)
-                (when (get-buffer "*git-peek-preview*")
-                  (kill-buffer "*git-peek-preview*"))
-                (unless committed
-                  (when (buffer-live-p origin-buf)
-                    (switch-to-buffer origin-buf)))))))
+         (commits (split-string (shell-command-to-string log-cmd) "\n" t)))
+    (unless commits
+      (error "Git-peek: no commits found for %s" file))
+    (setq git-peek--root    root
+          git-peek--file    file
+          git-peek--deleted deleted
+          git-peek--modeline-color-default (face-background 'mode-line))
+    ;; dimmer-mode paused
+    (setq git-peek--dimmer-was-on
+          (and (boundp 'dimmer-mode) dimmer-mode))
+    (when git-peek--dimmer-was-on
+      (dimmer-mode -1))
+    ;; Clear existing buffer overlay
+    (when (overlayp git-peek--hl-overlay)
+      (delete-overlay git-peek--hl-overlay)
+      (setq git-peek--hl-overlay nil))
+    (dolist (bname '("*git-peek-commits*" "*git-peek-preview*"))
+      (when (get-buffer bname)
+        (let ((win (get-buffer-window bname)))
+          (when win (delete-window win)))
+        (kill-buffer bname)))
+    ;; Window Layout Construction
+    ;; Save current window settings
+    (setq git-peek--saved-wconf (current-window-configuration))
+    (delete-other-windows)
+    (let* ((cbuf (get-buffer-create "*git-peek-commits*"))
+           (pbuf (get-buffer-create "*git-peek-preview*"))
+           (swin (split-window (selected-window) (- git-peek-sidebar-width) 'left))
+           (pwin (selected-window)))
+      (setq git-peek--sidebar-win swin
+            git-peek--preview-win pwin)
+      (set-window-buffer swin cbuf)
+      (set-window-buffer pwin pbuf)
+      (with-current-buffer cbuf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize "  ?:help\n" 'face 'shadow))
+          (dolist (c commits) (insert c "\n"))
+          ;; key guide added to the end of the sidebar (hidden if there are too many commits)
+          (insert (propertize
+                   (concat "\n"
+                           "--- [sidebar] ---\n"
+                           "↓/SPC:next  ↑/b:prev\n"
+                           "RET:preview  s:save\n"
+                           "C-d:diff  q:quit\n"
+                           "--- [preview] ---\n"
+                           "RET/f:back  s:save\n"
+                           "q:quit  scroll:free")
+                   'face 'shadow))
+          (goto-char (point-min))
+          (forward-line 1))  ;; Skip the ?:help line and go to the first commit
+        (git-peek-commit-mode)
+        (git-peek--highlight-current))
+      (select-window swin)
+      (git-peek--render-preview (git-peek--current-commit)))))
 
 ;;; Public commands
 
 ;;;###autoload
 (defun git-peek ()
-  "Browse past versions of files in the current git repository.
-Cursor movement in commit list updates preview in real-time.
-RET to save the selected version."
+  "Browse past versions of files in the current git repository."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
          (files (split-string
                  (shell-command-to-string
                   (format "git -C %s ls-files" root)) "\n" t))
-         (preselect (git-peek--preselect root))
-         (file (ivy-read "Select File: " files
-                         :preselect preselect)))
+         (initial (git-peek--initial-input root))
+         (file (ivy-read "Select File: " files :initial-input initial)))
     (git-peek--run root file nil)))
 
 ;;;###autoload
 (defun git-peek-deleted ()
-  "Browse past versions of deleted files in the current git repository.
-Cursor movement in commit list updates preview in real-time.
-RET to save the selected version."
+  "Browse past versions of deleted files in the current git repository."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
@@ -236,6 +462,47 @@ RET to save the selected version."
                   "\n" t)))
          (file (ivy-read "Select Deleted File: " files)))
     (git-peek--run root file t)))
+
+;;; Debug command
+
+;;;###autoload
+(defun git-peek-debug ()
+  "Show diagnostic info about the current git-peek session in *Messages*."
+  (interactive)
+  (let* ((cbuf (get-buffer "*git-peek-commits*"))
+         (cwin (and cbuf (get-buffer-window cbuf)))
+         (pbuf (get-buffer "*git-peek-preview*"))
+         (pwin (and pbuf (get-buffer-window pbuf))))
+    (message "=== git-peek-debug ===")
+    (if (not cbuf)
+        (message "[commits] buffer: NOT FOUND")
+      (message "[commits] buffer: exist, window: %s" (if cwin "exist" "NOT FOUND"))
+      (when cwin
+        (message "[commits] window-point: %d" (window-point cwin)))
+      (with-current-buffer cbuf
+        (message "[commits] buffer-point: %d  line: %d"
+                 (point) (line-number-at-pos))
+        (message "[commits] major-mode: %s" major-mode)
+        (message "[commits] buffer-read-only: %s" buffer-read-only)
+        (message "[commits] local-map: %s"
+                 (if (eq (current-local-map) git-peek-commit-mode-map)
+                     "git-peek-commit-mode-map (OK)"
+                   (format "OTHER: %s" (current-local-map))))
+        (message "[commits] current-commit: %S" (git-peek--current-commit))
+        (message "[commits] hl-overlay: %s  buf: %s"
+                 git-peek--hl-overlay
+                 (and (overlayp git-peek--hl-overlay)
+                      (overlay-buffer git-peek--hl-overlay)))))
+    (if (not pbuf)
+        (message "[preview] buffer: NOT FOUND")
+      (message "[preview] buffer: exist, window: %s" (if pwin "exist" "NOT FOUND"))
+      (when pwin
+        (message "[preview] window-point: %d" (window-point pwin)))
+      (with-current-buffer pbuf
+        (message "[preview] buffer size: %d chars" (buffer-size))))
+    (message "[session] root: %s" git-peek--root)
+    (message "[session] file: %s" git-peek--file)
+    (message "=== end ===")))
 
 (provide 'git-peek)
 ;; Local Variables:
