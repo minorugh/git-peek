@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.0.2
+;; Version: 1.0.3
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -22,11 +22,13 @@
 ;;   RET           プレビューバッファへフォーカス移動
 ;;   s             確定・保存
 ;;   C-d           diff/full切り替え
+;;   ?             キーガイドをミニバッファに表示
 ;;   q / C-g       キャンセル・終了
 ;;
 ;; キー操作（*git-peek-preview* バッファ内）:
 ;;   RET / f       サイドバーへフォーカス復帰
 ;;   s             確定・保存
+;;   ?             キーガイドをミニバッファに表示
 ;;   q / C-g       キャンセル・終了
 ;;   その他        通常の読み取り専用スクロール
 ;;
@@ -82,6 +84,7 @@ Example: \"#852941\"")
 (defvar git-peek--file nil)
 (defvar git-peek--deleted nil)
 (defvar git-peek--hl-overlay nil)
+(defvar git-peek--filename-overlay nil "Overlay covering the filename header line in the sidebar.")
 (defvar git-peek--sidebar-win nil "The sidebar window object.")
 (defvar git-peek--preview-win nil "The preview window object.")
 (defvar git-peek--dimmer-was-on nil "Non-nil if dimmer-mode was active before git-peek.")
@@ -200,6 +203,25 @@ Never changes window focus - sidebar remains selected."
 
 ;;; Commit sidebar
 
+(defun git-peek--show-help ()
+  "Show a brief key guide in the minibuffer."
+  (interactive)
+  (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
+
+(defun git-peek--highlight-filename ()
+  "Apply overlay covering the full filename header line in the sidebar."
+  (when (overlayp git-peek--filename-overlay)
+    (delete-overlay git-peek--filename-overlay)
+    (setq git-peek--filename-overlay nil))
+  (save-excursion
+    (goto-char (point-min))
+    (let* ((bol (line-beginning-position))
+           (eol (min (point-max) (1+ (line-end-position))))
+           (ov  (make-overlay bol eol (current-buffer))))
+      (overlay-put ov 'face git-peek-filename-face)
+      (overlay-put ov 'priority 50)
+      (setq git-peek--filename-overlay ov))))
+
 (defun git-peek--highlight-current ()
   "Highlight the line at point.
 Must be called with *git-peek-commits* as current buffer."
@@ -300,6 +322,9 @@ Keeps focus on the sidebar window throughout."
   (when (overlayp git-peek--hl-overlay)
     (delete-overlay git-peek--hl-overlay)
     (setq git-peek--hl-overlay nil))
+  (when (overlayp git-peek--filename-overlay)
+    (delete-overlay git-peek--filename-overlay)
+    (setq git-peek--filename-overlay nil))
   ;; modeline色を必ず復元してからクリア
   (when git-peek--preview-modeline-cookie
     (set-face-background 'mode-line git-peek--modeline-color-default)
@@ -342,7 +367,9 @@ Keeps focus on the sidebar window throughout."
     (define-key map (kbd "s")      #'git-peek--commit-save)
     (define-key map (kbd "C-g")    #'git-peek--commit-cancel)
     (define-key map (kbd "q")      #'git-peek--commit-cancel)
-    map))
+    (define-key map (kbd "?")      #'git-peek--show-help)
+    map)
+  "Keymap for *git-peek-commits* sidebar buffer.")
 
 (defvar git-peek-preview-mode-map
   (let ((map (make-sparse-keymap)))
@@ -352,6 +379,7 @@ Keeps focus on the sidebar window throughout."
     (define-key map (kbd "s")   #'git-peek--preview-save)
     (define-key map (kbd "C-g") #'git-peek--commit-cancel)
     (define-key map (kbd "q")   #'git-peek--commit-cancel)
+    (define-key map (kbd "?")   #'git-peek--show-help)
     map)
   "Keymap for *git-peek-preview* buffer.
 Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down-command], etc.) work.")
@@ -365,11 +393,8 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
   (setq-local buffer-read-only t)
   (when (fboundp 'evil-local-mode)
     (evil-local-mode -1))
-  (local-set-key git-peek-toggle-diff-key #'git-peek--commit-toggle-diff)
-  (when git-peek-next-key (local-set-key git-peek-next-key #'git-peek--commit-next))
-  (when git-peek-prev-key (local-set-key git-peek-prev-key #'git-peek--commit-prev))
   (setq-local mode-line-buffer-identification
-              (list (propertize " [git-peek] ↓/SPC:次 ↑/b:前 RET:プレビューへ s:保存 q:終了 C-d:diff"
+              (list (propertize " [git-peek] ↓/SPC:次 ↑/b:前 RET:プレビューへ s:保存 q:終了 C-d:diff ?:help"
                                 'face 'mode-line-buffer-id))))
 
 ;;; Layout setup
@@ -422,6 +447,11 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
           (goto-char (point-min))
           (forward-line 1))  ; ファイル名行をスキップして最初のコミットへ
         (git-peek-commit-mode)
+        ;; C-d/追加キーはモード起動後にkeymapへ動的設定
+        (local-set-key git-peek-toggle-diff-key #'git-peek--commit-toggle-diff)
+        (when git-peek-next-key (local-set-key git-peek-next-key #'git-peek--commit-next))
+        (when git-peek-prev-key (local-set-key git-peek-prev-key #'git-peek--commit-prev))
+        (git-peek--highlight-filename)
         (git-peek--highlight-current))
       ;; ウィンドウポイントを最初のコミット行に確実に設定
       (set-window-point swin
