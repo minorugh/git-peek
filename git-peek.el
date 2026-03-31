@@ -219,6 +219,7 @@ Never changes window focus - sidebar remains selected."
            (eol (min (point-max) (1+ (line-end-position))))
            (ov  (make-overlay bol eol (current-buffer))))
       (overlay-put ov 'face git-peek-filename-face)
+      (overlay-put ov 'extend t)   ; 行末以降の余白まで背景色を拡張
       (overlay-put ov 'priority 50)
       (setq git-peek--filename-overlay ov))))
 
