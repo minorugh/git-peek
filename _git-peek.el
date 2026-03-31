@@ -3,14 +3,9 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.0.3-trial2
+;; Version: 1.0.3
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
-
-;; *** お試し版2 ***
-;; 変更点:
-;;   [trial-1] ファイル名行背景色: defface + :extend t + 行末スペース詰め
-;;   [trial-2] ivy スキップ後のフォーカス・初期描画を修正
 
 ;;; Commentary:
 
@@ -80,9 +75,7 @@
 Set to nil to disable color change.
 Example: \"#852941\"")
 
-;; [trial-1] defface + :extend t で行全体に背景色を適用
-(defface git-peek-filename-face
-  '((t :foreground "#aaaaaa" :background "#2a3a5a" :weight bold :extend t))
+(defvar git-peek-filename-face '(:foreground "#aaaaaa" :background "#2a3a5a" :weight bold)
   "Face for the filename header line at the top of the sidebar.")
 
 ;;; Session variables
@@ -215,7 +208,6 @@ Never changes window focus - sidebar remains selected."
   (interactive)
   (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
 
-;; [trial-1] 行末にスペースを詰めて背景色をウィンドウ右端まで確実に広げる
 (defun git-peek--highlight-filename ()
   "Apply overlay covering the full filename header line in the sidebar."
   (when (overlayp git-peek--filename-overlay)
@@ -223,20 +215,11 @@ Never changes window focus - sidebar remains selected."
     (setq git-peek--filename-overlay nil))
   (save-excursion
     (goto-char (point-min))
-    ;; 行末までスペースを詰めてウィンドウ幅を埋める
-    (let* ((inhibit-read-only t)
-           (text (string-trim-right
-                  (buffer-substring-no-properties
-                   (line-beginning-position) (line-end-position))))
-           (pad  (max 0 (- git-peek-sidebar-width (length text))))
-           (bol  (line-beginning-position)))
-      (delete-region (line-beginning-position) (line-end-position))
-      (insert (concat text (make-string pad ?\s))))
     (let* ((bol (line-beginning-position))
            (eol (min (point-max) (1+ (line-end-position))))
            (ov  (make-overlay bol eol (current-buffer))))
-      (overlay-put ov 'face 'git-peek-filename-face)
-      (overlay-put ov 'extend t)
+      (overlay-put ov 'face git-peek-filename-face)
+      (overlay-put ov 'extend t)   ; 行末以降の余白まで背景色を拡張
       (overlay-put ov 'priority 50)
       (setq git-peek--filename-overlay ov))))
 
@@ -497,36 +480,16 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
 
 ;;;###autoload
 (defun git-peek ()
-  "Browse past versions of files in the current git repository.
-[trial-2] buffer-file-name が候補に完全一致する場合は ivy をスキップ。"
+  "Browse past versions of files in the current git repository."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
          (files (split-string
                  (shell-command-to-string
                   (format "git -C %s ls-files" root)) "\n" t))
-         (rel   (and buffer-file-name
-                     (git-peek--normalize-path
-                      (file-relative-name buffer-file-name root))))
-         (file  (if (and rel (member rel files))
-                    (progn (message "git-peek: ivy スキップ → %s" rel) rel)
-                  (ivy-read "Select File: " files
-                            :initial-input (git-peek--initial-input root)))))
-    (git-peek--run root file nil)
-    ;; [trial-2] ivy スキップ時はウィンドウ選択が sidebar に確実に来ない場合があるため
-    ;; run 後に sidebar へフォーカスを戻し初期プレビューを再描画する
-    (when (and rel (member rel files))
-      (when (window-live-p git-peek--sidebar-win)
-        (select-window git-peek--sidebar-win))
-      (with-current-buffer (get-buffer "*git-peek-commits*")
-        (let ((first-commit
-               (save-excursion
-                 (goto-char (point-min))
-                 (forward-line 1)
-                 (string-trim
-                  (buffer-substring-no-properties
-                   (line-beginning-position) (line-end-position))))))
-          (git-peek--render-preview first-commit))))))
+         (initial (git-peek--initial-input root))
+         (file (ivy-read "Select File: " files :initial-input initial)))
+    (git-peek--run root file nil)))
 
 ;;;###autoload
 (defun git-peek-deleted ()
