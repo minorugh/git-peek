@@ -440,8 +440,8 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
       (with-current-buffer cbuf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          ;; 先頭行: 選択ファイル名を表示（カーソルはここに乗らない）
-          (insert (propertize (format " %s\n" git-peek--file) 'face git-peek-filename-face))
+          ;; 先頭行: 選択ファイル名を表示（フェイスはオーバーレイで行全体に適用）
+          (insert (format " %s\n" git-peek--file))
           ;; コミット行: 半角1個インデント
           (dolist (c commits) (insert (format " %s\n" c)))
           (goto-char (point-min))
