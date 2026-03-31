@@ -113,7 +113,8 @@ Example: \"#852941\"")
   (if (string-prefix-p "./" path) (substring path 2) path))
 
 (defun git-peek--initial-input (root)
-  "Return an ivy initial-input string for the current buffer's file relative to ROOT."
+  "Return an ivy initial-input string.
+The string is for the current buffer's file relative to ROOT."
   (let ((abspath
          (cond
           ((derived-mode-p 'dired-mode) (dired-get-filename nil t))
@@ -228,8 +229,8 @@ Never changes window focus - sidebar remains selected."
            (text (string-trim-right
                   (buffer-substring-no-properties
                    (line-beginning-position) (line-end-position))))
-           (pad  (max 0 (- git-peek-sidebar-width (length text))))
-           (bol  (line-beginning-position)))
+           (pad  (max 0 (- git-peek-sidebar-width (length text)))))
+      ;; (bol  (line-beginning-position)))
       (delete-region (line-beginning-position) (line-end-position))
       (insert (concat text (make-string pad ?\s))))
     (let* ((bol (line-beginning-position))
@@ -429,12 +430,12 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
           git-peek--file    file
           git-peek--deleted deleted
           git-peek--modeline-color-default (face-background 'mode-line))
-    ;; dimmer-mode を一時停止
+    ;; dimmer-mode paused
     (setq git-peek--dimmer-was-on
           (and (boundp 'dimmer-mode) dimmer-mode))
     (when git-peek--dimmer-was-on
       (dimmer-mode -1))
-    ;; 既存バッファ・オーバーレイをクリア
+    ;; Clear existing buffer overlay
     (when (overlayp git-peek--hl-overlay)
       (delete-overlay git-peek--hl-overlay)
       (setq git-peek--hl-overlay nil))
@@ -443,8 +444,8 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
         (let ((win (get-buffer-window bname)))
           (when win (delete-window win)))
         (kill-buffer bname)))
-    ;; ── ウィンドウレイアウト構築 ──
-    ;; 現在のウィンドウ設定を保存
+    ;; --- Window Layout Construction ---
+    ;; Save current window settings
     (setq git-peek--saved-wconf (current-window-configuration))
     (delete-other-windows)
     (let* ((cbuf (get-buffer-create "*git-peek-commits*"))
@@ -458,20 +459,20 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
       (with-current-buffer cbuf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          ;; 先頭行: 選択ファイル名を表示（フェイスはオーバーレイで行全体に適用）
+          ;; First line: display selected file name (face applies to entire line with overlay)
           (insert (format " %s\n" git-peek--file))
-          ;; コミット行: 半角1個インデント
+          ;; Commit line: 1 half-width indent
           (dolist (c commits) (insert (format " %s\n" c)))
           (goto-char (point-min))
-          (forward-line 1))  ; ファイル名行をスキップして最初のコミットへ
+          (forward-line 1))  ;; Skip filename line to first commit
         (git-peek-commit-mode)
-        ;; C-d/追加キーはモード起動後にkeymapへ動的設定
+        ;; C-d/additional keys are dynamically set to keymap after mode activation
         (local-set-key git-peek-toggle-diff-key #'git-peek--commit-toggle-diff)
         (when git-peek-next-key (local-set-key git-peek-next-key #'git-peek--commit-next))
         (when git-peek-prev-key (local-set-key git-peek-prev-key #'git-peek--commit-prev))
         (git-peek--highlight-filename)
         (git-peek--highlight-current))
-      ;; ウィンドウポイントを最初のコミット行に確実に設定
+      ;;; Ensure window point is set to first commit line
       (set-window-point swin
                         (with-current-buffer cbuf
                           (save-excursion
@@ -479,11 +480,11 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
                             (forward-line 1)
                             (point))))
       (select-window swin)
-      ;; サイドバーがアクティブな状態で起動するのでmodeline色を適用
+      ;; Apply modeline color as sidebar is activated
       (when git-peek-preview-modeline-color
         (set-face-background 'mode-line git-peek-preview-modeline-color)
         (setq git-peek--preview-modeline-cookie t))
-      ;; 最初のコミットのプレビューを描画
+      ;; draw a preview of the first commit
       (let ((first-commit (with-current-buffer cbuf
                             (save-excursion
                               (goto-char (point-min))
@@ -498,7 +499,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
 ;;;###autoload
 (defun git-peek ()
   "Browse past versions of files in the current git repository.
-[trial-2] buffer-file-name が候補に完全一致する場合は ivy をスキップ。"
+Skip ivy if variable `buffer-file-name' exactly matches the candidate."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
@@ -509,12 +510,12 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
                      (git-peek--normalize-path
                       (file-relative-name buffer-file-name root))))
          (file  (if (and rel (member rel files))
-                    (progn (message "git-peek: ivy スキップ → %s" rel) rel)
+                    (progn (message "git-peek: ivy Skip → %s" rel) rel)
                   (ivy-read "Select File: " files
                             :initial-input (git-peek--initial-input root)))))
     (git-peek--run root file nil)
-    ;; [trial-2] ivy スキップ時はウィンドウ選択が sidebar に確実に来ない場合があるため
-    ;; run 後に sidebar へフォーカスを戻し初期プレビューを再描画する
+    ;; Since the window selection may not come to the sidebar reliably when skipping ivy
+    ;;; After run, return focus to sidebar and redraw initial preview.
     (when (and rel (member rel files))
       (when (window-live-p git-peek--sidebar-win)
         (select-window git-peek--sidebar-win))
