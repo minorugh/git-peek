@@ -7,11 +7,6 @@
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
-;; *** お試し版2 ***
-;; 変更点:
-;;   [trial-1] ファイル名行背景色: defface + :extend t + 行末スペース詰め
-;;   [trial-2] ivy スキップ後のフォーカス・初期描画を修正
-
 ;;; Commentary:
 
 ;; Browse past git-committed versions of files via ivy with real-time preview.
@@ -80,7 +75,6 @@
 Set to nil to disable color change.
 Example: \"#852941\"")
 
-;; [trial-1] defface + :extend t で行全体に背景色を適用
 (defface git-peek-filename-face
   '((t :foreground "#aaaaaa" :background "#2a3a5a" :weight bold :extend t))
   "Face for the filename header line at the top of the sidebar.")
@@ -216,7 +210,6 @@ Never changes window focus - sidebar remains selected."
   (interactive)
   (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
 
-;; [trial-1] 行末にスペースを詰めて背景色をウィンドウ右端まで確実に広げる
 (defun git-peek--highlight-filename ()
   "Apply overlay covering the full filename header line in the sidebar."
   (when (overlayp git-peek--filename-overlay)
@@ -230,7 +223,6 @@ Never changes window focus - sidebar remains selected."
                   (buffer-substring-no-properties
                    (line-beginning-position) (line-end-position))))
            (pad  (max 0 (- git-peek-sidebar-width (length text)))))
-      ;; (bol  (line-beginning-position)))
       (delete-region (line-beginning-position) (line-end-position))
       (insert (concat text (make-string pad ?\s))))
     (let* ((bol (line-beginning-position))
