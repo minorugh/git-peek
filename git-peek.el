@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.0.3-trial2
+;; Version: 1.1.0
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
