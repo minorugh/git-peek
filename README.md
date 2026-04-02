@@ -1,5 +1,8 @@
 # git-peek.el
 
+![Alt Text](https://minorugh.github.io/img/git-peek.png) 
+
+
 git 管理下のファイルの過去バージョンを ivy で選択し、
 左右分割のサイドバーUIでプレビューしながら `~/Dropbox/backup/tmp/` に保存するツール。
 
