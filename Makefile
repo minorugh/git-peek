@@ -8,6 +8,7 @@ git:
 	git diff --cached --quiet || git commit -m "auto: $$(date '+%Y-%m-%d %H:%M:%S')"
 ifeq ($(HOSTNAME),P1)
 	git push
+	@echo "git: pushed to all remotes." >&2
 else
 	@echo "$(HOSTNAME): サブ機からはpushしません（pullのみ）"
 	git pull --rebase
