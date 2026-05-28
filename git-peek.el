@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.1.0
+;; Version: 1.10.0
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -57,6 +57,9 @@
 
 (defvar git-peek-save-dir (expand-file-name "~/Dropbox/backup/tmp/")
   "Directory to save extracted files.")
+
+(defvar git-peek-finish-hook nil
+  "Hook run after `git-peek--finish' completes.")
 
 (defvar git-peek-show-diff nil
   "When non-nil, preview shows diff against current file instead of full content.")
@@ -364,7 +367,8 @@ Keeps focus on the sidebar window throughout."
                git-peek--root hash
                (git-peek--normalize-path git-peek--file) dest))
       (dired git-peek-save-dir)
-      (message "Saved: %s" dest))))
+      (message "Saved: %s" dest)))
+  (run-hooks 'git-peek-finish-hook))
 
 ;;; Keymaps
 
