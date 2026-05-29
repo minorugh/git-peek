@@ -55,8 +55,12 @@
 (defvar git-peek-sidebar-width 30
   "Width of the left sidebar showing commit list.")
 
-(defvar git-peek-save-dir (expand-file-name "~/Dropbox/backup/tmp/")
+(defvar git-peek-save-dir (expand-file-name "~/tmp/git-peek/")
   "Directory to save extracted files.")
+
+;; デフォルトの保存先ディレクトリがなければ自動作成
+(unless (file-directory-p git-peek-save-dir)
+  (make-directory git-peek-save-dir t))
 
 (defvar git-peek-finish-hook nil
   "Hook run after `git-peek--finish' completes.")
