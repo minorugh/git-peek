@@ -17,8 +17,8 @@
 ;;   右           : *git-peek-preview*  内容プレビュー（全画面）
 ;;
 ;; キー操作（*git-peek-commits* バッファ内）:
-;;   <down> / SPC  次のコミット＋プレビュー更新
-;;   <up> / b      前のコミット＋プレビュー更新
+;;   <down> / j / SPC  次のコミット＋プレビュー更新
+;;   <up> / k / b      前のコミット＋プレビュー更新
 ;;   RET           プレビューバッファへフォーカス移動
 ;;   s             確定・保存
 ;;   C-d           diff/full切り替え
@@ -215,7 +215,7 @@ Never changes window focus - sidebar remains selected."
 (defun git-peek--show-help ()
   "Show a brief key guide in the minibuffer."
   (interactive)
-  (message "[sidebar] ↓/SPC:next  ↑/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
+  (message "[sidebar] ↓/j/SPC:next  ↑/k/b:prev  RET:preview  s:save  C-d:diff  q:quit  |  [preview] RET/f:back  s:save  q:quit"))
 
 (defun git-peek--highlight-filename ()
   "Apply overlay covering the full filename header line in the sidebar."
@@ -380,8 +380,10 @@ Keeps focus on the sidebar window throughout."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "<down>") #'git-peek--commit-next)
     (define-key map (kbd "SPC")    #'git-peek--commit-next)
+    (define-key map (kbd "j")      #'git-peek--commit-next)
     (define-key map (kbd "<up>")   #'git-peek--commit-prev)
     (define-key map (kbd "b")      #'git-peek--commit-prev)
+    (define-key map (kbd "k")      #'git-peek--commit-prev)
     (define-key map (kbd "RET")    #'git-peek--commit-go-preview)
     (define-key map (kbd "s")      #'git-peek--commit-save)
     (define-key map (kbd "C-g")    #'git-peek--commit-cancel)
@@ -413,7 +415,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
   (when (fboundp 'evil-local-mode)
     (evil-local-mode -1))
   (setq-local mode-line-buffer-identification
-              (list (propertize " [git-peek] ↓/SPC:次 ↑/b:前 RET:プレビューへ s:保存 q:終了 C-d:diff ?:help"
+              (list (propertize " [git-peek] ↓/j/SPC:次 ↑/k/b:前 RET:プレビューへ s:保存 q:終了 C-d:diff ?:help"
                                 'face 'mode-line-buffer-id))))
 
 ;;; Layout setup
