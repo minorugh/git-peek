@@ -78,7 +78,7 @@
   "Additional key to move to previous commit, nil = disabled.")
 
 (defvar git-peek-preview-modeline-color "#852941"
-  "Modeline background color for the active git-peek buffer (sidebar and preview).
+  "Modeline background color for the active`git-peek' buffer (sidebar and preview).
 Set to nil to disable color change.
 Example: \"#852941\"")
 
@@ -95,10 +95,10 @@ Example: \"#852941\"")
 (defvar git-peek--filename-overlay nil "Overlay covering the filename header line in the sidebar.")
 (defvar git-peek--sidebar-win nil "The sidebar window object.")
 (defvar git-peek--preview-win nil "The preview window object.")
-(defvar git-peek--dimmer-was-on nil "Non-nil if dimmer-mode was active before git-peek.")
-(defvar git-peek--saved-wconf nil "Window configuration saved before git-peek layout.")
+(defvar git-peek--dimmer-was-on nil "Non-nil if dimmer-mode was active before `git-peek'.")
+(defvar git-peek--saved-wconf nil "Window configuration saved before `git-peek' layout.")
 (defvar git-peek--preview-modeline-cookie nil "Face-remap cookie for preview modeline color.")
-(defvar git-peek--modeline-color-default nil "Default mode-line background color saved before git-peek.")
+(defvar git-peek--modeline-color-default nil "Default mode-line background color saved before `git-peek'.")
 
 ;;; Internal helpers
 
@@ -125,7 +125,7 @@ The string is for the current buffer's file relative to ROOT."
       (concat "^" (git-peek--normalize-path (file-relative-name abspath root))))))
 
 (defun git-peek--mozc-off ()
-  "Disable mozc-mode if it is currently active."
+  "Disable `mozc-mode' if it is currently active."
   (when (and (boundp 'mozc-mode) mozc-mode)
     (mozc-mode -1)))
 
@@ -336,7 +336,7 @@ Keeps focus on the sidebar window throughout."
   (git-peek--finish nil))
 
 (defun git-peek--finish (commit)
-  "Tear down git-peek layout; save COMMIT if non-nil."
+  "Tear down `git-peek' layout; save COMMIT if non-nil."
   (when (overlayp git-peek--hl-overlay)
     (delete-overlay git-peek--hl-overlay)
     (setq git-peek--hl-overlay nil))
@@ -408,7 +408,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
 ;;; Commit mode
 
 (define-derived-mode git-peek-commit-mode fundamental-mode "git-peek"
-  "Major mode for git-peek commit selection sidebar."
+  "Major mode for `git-peek' commit selection sidebar."
   (setq-local truncate-lines t)
   (setq-local cursor-type 'bar)
   (setq-local buffer-read-only t)
@@ -549,7 +549,7 @@ Skip ivy if variable `buffer-file-name' exactly matches the candidate."
 
 ;;;###autoload
 (defun git-peek-debug ()
-  "Show diagnostic info about the current git-peek session in *Messages*."
+  "Show diagnostic info about the current `git-peek' session in *Messages*."
   (interactive)
   (let* ((cbuf (get-buffer "*git-peek-commits*"))
          (cwin (and cbuf (get-buffer-window cbuf)))
