@@ -67,6 +67,7 @@ git 管理下のファイルの過去バージョンを ivy で選択し、
 | `RET`        | プレビューバッファへフォーカス移動  |
 | `s`          | 選択したバージョンを保存            |
 | `C-d`        | 全文表示 ↔ diff 表示をトグル        |
+| `t`          | tig を起動して探し直す              |
 | `?`          | キーガイドをミニバッファに表示      |
 | `q` / `C-g` | キャンセル（元のウィンドウに戻る）  |
 
@@ -79,6 +80,35 @@ git 管理下のファイルの過去バージョンを ivy で選択し、
 | `?`          | キーガイドをミニバッファに表示 |
 | `q` / `C-g` | キャンセル（元のウィンドウに戻る） |
 | その他       | 通常のスクロール操作（自由） |
+
+## tig 連携（my-tig-bridge.el）
+
+tig で diff を眺めながら目的のコミットを探し、そのまま git-peek へ渡せる仕組み。
+
+### フロー
+
+1. Emacs でファイルを開いている（or dired でカーソル位置）
+2. `my-open-tig` で gnome-terminal に tig を起動
+3. tig で diff を眺めながら目的のコミットを発見
+4. tig 上で `E` を押す → emacsclient 経由で git-peek が該当コミット位置から開く
+5. git-peek で保存、または `q` で閉じて `my-open-tig` で tig を再起動して探し直す
+
+### セットアップ
+
+`~/.emacs.d/elisp/my-tig-bridge.el` を配置して `(require 'my-tig-bridge)`。
+
+`~/.config/tig/config` に追記：
+
+```
+bind generic E !sh -c "emacsclient --eval '(git-peek-from-hash \"%(commit)\")'; xdotool getactivewindow windowminimize"
+```
+
+### 仕組み
+
+- `my-open-tig` 起動時に対象ファイルパスを `/tmp/tig-peek-context` に上書き保存
+- tig 上で `E` → `git-peek-from-hash` がコンテキストファイルを読んで git-peek を起動
+- xsrv 配下かどうかはパスを見て自動判定（`my-git-peek-smart` 相当）
+- `/tmp/tig-peek-context` は常に上書き1ファイルのみ保持
 
 ## カスタマイズ
 
