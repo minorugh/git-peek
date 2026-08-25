@@ -66,8 +66,6 @@ git 管理下のファイルの過去バージョンを ivy で選択し、
 | `↑` / `b`   | 前のコミットへ移動＋プレビュー更新  |
 | `RET`        | プレビューバッファへフォーカス移動  |
 | `s`          | 選択したバージョンを保存            |
-| `C-d`        | 全文表示 ↔ diff 表示をトグル        |
-| `t`          | tig を起動して探し直す              |
 | `?`          | キーガイドをミニバッファに表示      |
 | `q` / `C-g` | キャンセル（元のウィンドウに戻る）  |
 
@@ -119,12 +117,6 @@ bind generic E !sh -c "emacsclient --eval '(git-peek-from-hash \"%(commit)\")'; 
 ;; 保存先ディレクトリ（デフォルト: ~/Dropbox/backup/tmp/）
 (setq git-peek-save-dir (expand-file-name "~/Dropbox/backup/tmp/"))
 
-;; diff トグルのキー（デフォルト: C-d）
-(setq git-peek-toggle-diff-key (kbd "C-d"))
-
-;; 起動時から diff 表示にする場合
-(setq git-peek-show-diff t)
-
 ;; 追加の移動キー（デフォルト: nil = 無効）
 (setq git-peek-next-key (kbd "n"))
 (setq git-peek-prev-key (kbd "p"))
@@ -168,4 +160,3 @@ evil-mode 環境ではコミットバッファ・プレビューバッファと�
 - `file-truename` でリポジトリルートを正規化（`~/` 略記・シンボリックリンクを解決）
 - サイドバー先頭のファイル名行は `defface` + overlay + 行末スペース詰めで行全体に背景色を適用
 - mozc が有効な場合は起動時に自動で無効化
-- dimmer-mode が有効な場合は git-peek 中に自動で一時停止
