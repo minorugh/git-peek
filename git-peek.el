@@ -439,7 +439,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
                          (string-match "\\`[0-9a-f]+ " c))
                 ;; Hide hash and its following space; retain the text internally.
                 (add-text-properties
-                 (1+ start) (+ start 2 (match-end 0))
+                 (1+ start) (+ start 1 (match-end 0))
                  '(invisible git-peek-hash)))))
           (goto-char (point-min))
           (forward-line 1))  ;; Skip filename line to first commit
