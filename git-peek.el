@@ -36,6 +36,7 @@
 ;;   git-peek-preview-modeline-color でアクティブバッファのモードライン色を指定
 ;;                                    （サイドバー・プレビュー共用）
 ;;   git-peek-filename-face でサイドバー先頭のファイル名行の表示スタイルを指定
+;;   git-peek-show-hash でコミットハッシュの表示/非表示を指定
 ;;
 ;; Usage:
 ;;   M-x git-peek         - Browse current files in the repository
@@ -56,6 +57,12 @@
 
 (defvar git-peek-save-dir (expand-file-name "~/tmp/git-peek/")
   "Directory to save extracted files.")
+
+(defcustom git-peek-show-hash t
+  "Whether to display abbreviated commit hashes in the sidebar.
+The hashes remain in the buffer for preview and save operations."
+  :type 'boolean
+  :group 'git-peek)
 
 ;; デフォルトの保存先ディレクトリがなければ自動作成
 (unless (file-directory-p git-peek-save-dir)
@@ -424,11 +431,21 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
           (erase-buffer)
           ;; First line: display selected file name (face applies to entire line with overlay)
           (insert (format " %s\n" git-peek--file))
-          ;; Commit line: 1 half-width indent
-          (dolist (c commits) (insert (format " %s\n" c)))
+          ;; Commit lines: keep hashes in the buffer, optionally hide them visually.
+          (dolist (c commits)
+            (let ((start (point)))
+              (insert (format " %s\n" c))
+              (when (and (not git-peek-show-hash)
+                         (string-match "\\`[0-9a-f]+ " c))
+                ;; Hide hash and its following space; retain the text internally.
+                (add-text-properties
+                 (1+ start) (+ start 2 (match-end 0))
+                 '(invisible git-peek-hash)))))
           (goto-char (point-min))
           (forward-line 1))  ;; Skip filename line to first commit
         (git-peek-commit-mode)
+        (unless git-peek-show-hash
+          (add-to-invisibility-spec 'git-peek-hash))
         ;; additional keys are dynamically set to keymap after mode activation
         (when git-peek-next-key (local-set-key git-peek-next-key #'git-peek--commit-next))
         (when git-peek-prev-key (local-set-key git-peek-prev-key #'git-peek--commit-prev))
