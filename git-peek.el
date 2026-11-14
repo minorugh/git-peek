@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Minoru Yamada and Claude (Anthropic)
 ;; Author: Minoru Yamada <minorugh@gmail.com>
 ;; URL: https://github.com/minorugh/git-peek
-;; Version: 1.10.0
+;; Version: 1.11.0
 ;; Package-Requires: ((emacs "27.1") (ivy "0.13.0"))
 ;; Keywords: git, backup, versioning
 
@@ -40,7 +40,8 @@
 ;;
 ;; Usage:
 ;;   M-x git-peek         - Browse current files in the repository
-;;   M-x git-peek-deleted - Browse deleted files in the repository
+;;                          Dired ではカーソル位置のファイルを直接開く
+;;   M-x git-peek-deleted - Browse deleted files under the current directory
 ;;
 ;; Requires: ivy, git
 
@@ -112,14 +113,17 @@ Example: \"#852941\"")
   "Remove leading \"./\" from PATH for use in git commands."
   (if (string-prefix-p "./" path) (substring path 2) path))
 
+(defun git-peek--target-file ()
+  "Return the absolute path of the file at point in Dired, or of this buffer.
+Return nil when there is no such file."
+  (if (derived-mode-p 'dired-mode)
+      (dired-get-filename nil t)
+    buffer-file-name))
+
 (defun git-peek--initial-input (root)
   "Return an ivy initial-input string.
-The string is for the current buffer's file relative to ROOT."
-  (let ((abspath
-         (cond
-          ((derived-mode-p 'dired-mode) (dired-get-filename nil t))
-          (buffer-file-name buffer-file-name)
-          (t nil))))
+The string is for the target file relative to ROOT."
+  (let ((abspath (git-peek--target-file)))
     (when abspath
       (concat "^" (git-peek--normalize-path (file-relative-name abspath root))))))
 
@@ -478,16 +482,18 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
 ;;;###autoload
 (defun git-peek ()
   "Browse past versions of files in the current git repository.
-Skip ivy if variable `buffer-file-name' exactly matches the candidate."
+Skip ivy if the target file exactly matches a tracked file.
+The target is the file at point in Dired, or the file of this buffer."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
          (files (split-string
                  (shell-command-to-string
                   (format "git -C %s ls-files" root)) "\n" t))
-         (rel   (and buffer-file-name
+         (target (git-peek--target-file))
+         (rel   (and target
                      (git-peek--normalize-path
-                      (file-relative-name buffer-file-name root))))
+                      (file-relative-name target root))))
          (file  (if (and rel (member rel files))
                     (progn (message "git-peek: ivy Skip → %s" rel) rel)
                   (ivy-read "Select File: " files
@@ -510,14 +516,17 @@ Skip ivy if variable `buffer-file-name' exactly matches the candidate."
 
 ;;;###autoload
 (defun git-peek-deleted ()
-  "Browse past versions of deleted files in the current git repository."
+  "Browse past versions of deleted files under the current directory.
+Subdirectories are included.  At the repository root, all deleted files."
   (interactive)
   (git-peek--mozc-off)
   (let* ((root (git-peek--find-root))
+         (dir  (file-relative-name (file-truename default-directory) root))
          (files (delete-dups
                  (split-string
                   (shell-command-to-string
-                   (format "git -C %s log --all --diff-filter=D --name-only --format=''" root))
+                   (format "git -C %s log --all --diff-filter=D --name-only --format='' -- %s"
+                           root (shell-quote-argument dir)))
                   "\n" t)))
          (file (ivy-read "Select Deleted File: " files)))
     (git-peek--run root file t)))
