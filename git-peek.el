@@ -10,7 +10,7 @@
 ;;; Commentary:
 
 ;; Browse past git-committed versions of files via ivy with real-time preview.
-;; Selected versions are saved to ~/Dropbox/backup/tmp/ with a date prefix.
+;; Selected versions are saved to ~/tmp/git-peek/ with a date prefix.
 ;;
 ;; レイアウト:
 ;;   左サイドバー : *git-peek-commits*  commit一覧
@@ -400,7 +400,7 @@ Inherits global map so normal scroll keys (\\[scroll-up-command], \\[scroll-down
 (defun git-peek--run (root file &optional deleted)
   "Set up sidebar+preview layout for FILE in ROOT."
   (let* ((log-cmd (if deleted
-                      (format "git -C %s log --all --oneline -- %s" root file)
+                      (format "git -C %s log --all --oneline --diff-filter=AM -- %s" root file)
                     (format "git -C %s log --oneline -- %s" root file)))
          (commits (split-string (shell-command-to-string log-cmd) "\n" t)))
     (unless commits
